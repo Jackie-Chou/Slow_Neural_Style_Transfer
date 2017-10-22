@@ -1,11 +1,11 @@
 import os
 
-import argparse
 import functools
 import time
 import vgg
 import tensorflow as tf
 import numpy as np
+import transform
 from utils import *
 
 STYLE_LAYERS = ['relu1_1', 'relu2_1', 'relu3_1', 'relu4_1', 'relu5_1']
@@ -15,21 +15,18 @@ parser = argparse.ArgumentParser(description="transfer image style")
 
 parser.add_argument('-s', '--style_path', type=str, required=True)
 parser.add_argument('-c', '--content_path', type=str, required=True)
-parser.add_argument('-g', '--gpu_id', default="0", type=str, required=False)
+parser.add_argument('-g', '--gpu_id', default='0', type=str, required=False)
 parser.add_argument('-o', '--output_path', default='../data/styled/output.jpg', type=str, required=False)
 parser.add_argument('-t', '--tem_save_path', default='../data/tem', type=str, required=False)
 parser.add_argument('-i', '--init_img', default='content', type=str, required=False)
 parser.add_argument('-m', '--max_steps', default=500, type=int, required=False)
-parser.add_argument('-v', '--save_steps', default=100, type=int, required=False)
 parser.add_argument('-x', '--content_weight', default=1e-3, type=float, required=False)
 parser.add_argument('-y', '--style_weight', default=0.2, type=float, required=False)
-parser.add_argument('-z', '--tv_weight', default=1e-5, type=float, required=False)
 parser.add_argument('-r', '--learning_rate', default=1e3, type=float, required=False)
 
 
-def optimize(content_target, style_target, content_weight, style_weight, tv_weight, 
-             learning_rate, vgg_path, max_steps, save_steps, 
-             init_img, tem_save_path, output_path):  
+def optimize(content_target, style_target, content_weight, style_weight, leanring_rate,
+             vgg_path, max_steps, init_img, tem_save_path, output_path)   
    
     content_shape = (1,) + content_target.shape
     style_shape = (1,) + style_target.shape
@@ -63,18 +60,19 @@ def optimize(content_target, style_target, content_weight, style_weight, tv_weig
         X_pre = vgg.preprocess(X_content)
 
         if init_img == 'content':
-            preds = tf.Variable(np.array([content_target]), dtype=tf.float32)
+            preds = np.array([content_target])
         elif init_img == 'style':
-            preds = tf.Variable(np.array([scale_img(style_target, content_target.shape[0:2])]), dtype=tf.float32)
+            preds = np.array([scale_img(style_target, content_target.shape[0:2])])
         else:
             preds = tf.Variable(
-             tf.random_normal(output_shape)*75. + 127.
+             tf.random_normal(X_content.get_shape())*75. + 127.
             )
-        preds_pre = tf.cast(vgg.preprocess(preds), tf.float32)
+        preds_pre = vgg.preprocess(preds)
 
         net = vgg.net(vgg_path, preds_pre)
 
-        content_size = tf.cast(tf.reshape(content_features[CONTENT_LAYER], [-1]).shape[0], tf.float32)
+        content_size = _tensor_size(content_features[CONTENT_LAYER])*batch_size
+        assert _tensor_size(content_features[CONTENT_LAYER]) == _tensor_size(net[CONTENT_LAYER])
         content_loss = content_weight * (2 * tf.nn.l2_loss(
             net[CONTENT_LAYER] - content_features[CONTENT_LAYER]) / content_size
         )
@@ -90,14 +88,14 @@ def optimize(content_target, style_target, content_weight, style_weight, tv_weig
             style_gram = style_features[style_layer]
             style_losses.append(2 * tf.nn.l2_loss(grams - style_gram)/style_gram.size)
 
-        style_loss = style_weight * functools.reduce(tf.add, style_losses)
+        style_loss = style_weight * functools.reduce(tf.add, style_losses) / batch_size
 
         # total variation denoising
-        tv_y_size = tf.cast(_tensor_size(preds[:,1:,:,:]), tf.float32)
-        tv_x_size = tf.cast(_tensor_size(preds[:,:,1:,:]), tf.float32)
-        y_tv = tf.nn.l2_loss(preds[:,1:,:,:] - preds[:,:output_shape[1]-1,:,:])
-        x_tv = tf.nn.l2_loss(preds[:,:,1:,:] - preds[:,:,:output_shape[2]-1,:])
-        tv_loss = tv_weight*2*(x_tv/tv_x_size + y_tv/tv_y_size)
+        tv_y_size = _tensor_size(preds[:,1:,:,:])
+        tv_x_size = _tensor_size(preds[:,:,1:,:])
+        y_tv = tf.nn.l2_loss(preds[:,1:,:,:] - preds[:,:batch_shape[1]-1,:,:])
+        x_tv = tf.nn.l2_loss(preds[:,:,1:,:] - preds[:,:,:batch_shape[2]-1,:])
+        tv_loss = tv_weight*2*(x_tv/tv_x_size + y_tv/tv_y_size)/batch_size
 
         loss = content_loss + style_loss + tv_loss
 
@@ -108,11 +106,11 @@ def optimize(content_target, style_target, content_weight, style_weight, tv_weig
         for step in range(max_steps):
             to_get = [style_loss, content_loss, tv_loss, loss, train_step]
             tup = sess.run(to_get)
-            _style_loss,_content_loss,_tv_loss,_loss, ttt = tup
+            _style_loss,_content_loss,_tv_loss,_loss,_preds = tup
             print "step: {}".format(step)
             print "style_loss: {} content_loss: {} tv_loss: {} loss_ {}".format(_style_loss, \
                     _content_loss, _tv_loss, _loss)
-            if (step+1)%save_steps==0:
+            if (step+1)%save_steps:
                 _preds = sess.run(preds)
                 _preds = np.reshape(_preds, content_target.shape)
                 save_img(os.path.join(tem_save_path, '%d.jpg'%(step+1)), _preds)
@@ -125,7 +123,7 @@ def optimize(content_target, style_target, content_weight, style_weight, tv_weig
 
 def _tensor_size(tensor):
     from operator import mul
-    return functools.reduce(mul, (d.value for d in tensor.shape[1:]), 1)
+    return functools.reduce(mul, (d.value for d in tensor.get_shape()[1:]), 1)
 
 def main(args):
     style_target = get_img(args.style_path)
@@ -135,15 +133,13 @@ def main(args):
     tem_save_path = args.tem_save_path
     init_img = args.init_img
     max_steps = args.max_steps
-    save_steps = args.save_steps
     content_weight = args.content_weight
     style_weight = args.style_weight
-    tv_weight = args.tv_weight
     learning_rate = args.learning_rate
-    vgg_path = '../data/imagenet-vgg-verydeep-19.mat'
+    vgg_path = ''
 
-    optimize(content_target, style_target, content_weight, style_weight, tv_weight,
-             learning_rate, vgg_path, max_steps, save_steps, init_img, tem_save_path, output_path)
+    optimize(content_target, style_target, content_weight, style_weight, learning_rate,
+             vgg_path, max_steps, init_img, tem_save_path, output_path)
 
 if __name__ == '__main__':
     args = parser.parse_args()
