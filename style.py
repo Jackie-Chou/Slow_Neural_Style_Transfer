@@ -99,11 +99,14 @@ def optimize(content_target, style_target, content_weight, style_weight, tv_weig
         x_tv = tf.nn.l2_loss(preds[:,:,1:,:] - preds[:,:,:output_shape[2]-1,:])
         tv_loss = tv_weight*2*(x_tv/tv_x_size + y_tv/tv_y_size)
 
-        loss = content_loss + style_loss + tv_loss
+        loss = content_loss + style_loss #+ tv_loss
 
         # overall loss
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
         sess.run(tf.global_variables_initializer())
+        _preds = sess.run(preds)
+        _preds = np.reshape(_preds, content_target.shape)
+        save_img(os.path.join(tem_save_path, '1.jpg'), _preds)
         start_time = time.time()
         for step in range(max_steps):
             to_get = [style_loss, content_loss, tv_loss, loss, train_step]
