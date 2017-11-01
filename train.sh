@@ -1,9 +1,9 @@
 #!/bin/bash
 python style.py \
-    -s ../data/style/starry_night.jpg \
-    -c ../data/content/sanfrancisco.jpg \
-    -o ../data/styled/sanfrancisco_starry.jpg \
-    -t ../data/tem \
+    -s /path/to/style/image \
+    -c /path/to/content/image \
+    -o /path/to/output/image \
+    -t /path/to/tem/dir \
     -i "content" \
     -m 5000 \
     -v 100 \
